@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Livrezone - Noyau + deux cartes</title>
+    <!-- ==================== BIBLIOTHÈQUES EXTERNES (avec defer) ==================== -->
+    <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js" defer></script>
+    <script src="https://unpkg.com/open-location-code@1.0.3/dist/openlocationcode.min.js" defer></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js" defer></script>
+    
+    <style>
+        /* ==================== STYLES (inchangés) ==================== */
+        * { box-sizing: border-box; user-select: none; }
+        body { margin: 0; background-color: #1a1a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; font-family: 'Segoe UI', system-ui, sans-serif; color: white; padding: 12px; }
+        .noyau-wrapper { display: flex; flex-direction: column; align-items: center; margin-top: -20px; margin-bottom: 10px; }
+        .app-container { position: relative; width: min(70vw, 70vh, 350px); height: min(70vw, 70vh, 350px); margin: 0 auto; background: transparent; }
+        .closest-info { text-align: center; margin-top: 12px; background: rgba(0,0,0,0.6); padding: 6px 14px; border-radius: 40px; backdrop-filter: blur(4px); font-size: 0.9rem; font-weight: bold; color: #ffcd7e; }
+        .closest-info span { color: white; }
+        .dual-maps { display: flex; flex-wrap: nowrap; gap: 12px; width: 100%; max-width: 700px; margin: 15px auto 0 auto; position: relative; }
+        .map-card { flex: 1; background: #2c2e34; border-radius: 20px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.5); border: 1px solid #444; height: 220px; position: relative; }
+        .map-card h4 { margin: 0; padding: 6px; text-align: center; font-size: 0.7rem; background: #1f1f2a; color: #ffcd7e; }
+        .map-card .map { width: 100%; height: calc(100% - 28px); }
+        .map-loader { position: absolute; top: 28px; left: 0; width: 100%; height: calc(100% - 28px); background: rgba(0,0,0,0.7); backdrop-filter: blur(3px); display: flex; justify-content: center; align-items: center; z-index: 1000; border-radius: 0 0 20px 20px; }
+        .spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,0.3); border-top: 3px solid #ff4444; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .btn-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40%; max-width: 140px; min-width: 100px; aspect-ratio: 1/1; background-color: #2c2e34; background-size: cover; background-position: center; background-repeat: no-repeat; border-radius: 50%; z-index: 10; box-shadow: 0 8px 20px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.1); border: none; transition: all 0.5s ease-out; cursor: pointer; }
+        .btn-center.pulse { animation: pulse-ring 1.2s infinite; box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); }
+        @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(255, 0, 0, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0); } }
+        .voyant { position: absolute; width: 3vmin; height: 3vmin; max-width: 18px; max-height: 18px; min-width: 10px; min-height: 10px; background-color: #555; border-radius: 50%; transform: translate(-50%, -50%); transition: all 0.5s ease-out, background-color 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.5); pointer-events: none; z-index: 5; }
+        .btn-circle { position: absolute; width: 9vmin; height: 9vmin; max-width: 48px; max-height: 48px; min-width: 36px; min-height: 36px; background-color: #333; background-size: cover; background-position: center; background-repeat: no-repeat; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; transform: translate(-50%, -50%); transition: all 0.5s ease-out, box-shadow 0.2s; border: 2px solid rgba(255,255,255,0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); z-index: 8; touch-action: manipulation; }
+        .btn-circle.delivered { border: 3px solid #39ff14; box-shadow: 0 0 12px #39ff14, 0 4px 8px rgba(0,0,0,0.4); transition: all 0.2s; }
+        #role-switch { position: fixed; top: 8px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; z-index: 100; padding: 0 12px; flex-wrap: wrap; }
+        .role-btn { padding: 6px 14px; border: none; cursor: pointer; border-radius: 40px; font-weight: bold; transition: all 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 0.8rem; }
+        .active-admin { background-color: #ff4444; color: white; }
+        .active-livreur { background-color: #28a745; color: white; }
+        .brand { background: #1f1f2a; padding: 4px 12px; border-radius: 40px; font-weight: bold; letter-spacing: 1px; font-size: 0.75rem; box-shadow: inset 0 0 2px #ffffff30, 0 2px 6px black; color: #ffcd7e; }
+        .admin-controls { position: fixed; top: 55px; left: 0; right: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; z-index: 100; pointer-events: none; padding: 0 10px; }
+        .admin-controls select, .admin-controls button { pointer-events: auto; background: #2c2e34; color: white; border: 1px solid #555; border-radius: 30px; padding: 4px 12px; font-size: 0.7rem; font-weight: bold; cursor: pointer; box-shadow: 0 2px 6px black; outline: none; }
+        .admin-controls button { background: #4a4e5a; transition: 0.2s; }
+        .admin-controls button:active { transform: scale(0.96); }
+        .admin-controls label { pointer-events: auto; background: rgba(0,0,0,0.5); padding: 2px 8px; border-radius: 20px; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 5px; }
+        .admin-controls.hidden { display: none; }
+        .excel-group { position: relative; display: inline-block; }
+        .excel-sub-buttons { position: absolute; top: 100%; left: 0; margin-top: 5px; background: #2c2e34; border-radius: 20px; padding: 5px; display: flex; flex-direction: column; gap: 5px; z-index: 200; box-shadow: 0 4px 12px black; }
+        .excel-sub-buttons button { white-space: nowrap; }
+        .hidden-group { display: none; }
+        .offline-overlay { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #ffcc00; padding: 4px 8px; border-radius: 8px; font-size: 0.7rem; z-index: 1001; pointer-events: none; backdrop-filter: blur(4px); }
+        .geo-message { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #333; color: #ffcd7e; padding: 6px 14px; border-radius: 40px; font-size: 0.75rem; z-index: 200; text-align: center; white-space: nowrap; pointer-events: none; backdrop-filter: blur(4px); }
+        .geo-message button { pointer-events: auto; background: #28a745; border: none; border-radius: 30px; padding: 3px 10px; margin-left: 8px; color: white; cursor: pointer; font-size: 0.7rem; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(18, 18, 24, 0.85); backdrop-filter: blur(3px); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: #2c2e34; padding: 20px 18px; border-radius: 40px; width: 85%; max-width: 300px; text-align: center; box-shadow: 12px 12px 24px rgba(0,0,0,0.5), -8px -8px 18px rgba(70,75,85,0.3); }
+        .modal-content p { font-size: 1.3rem; font-weight: 600; margin: 0 0 16px; color: white; }
+        .modal-content h2 { font-size: 1.4rem; margin: 12px 0; color: white; }
+        .modal input { width: 100%; margin-bottom: 12px; padding: 10px 14px; border: none; border-radius: 50px; background: #24262c; color: white; box-shadow: inset 4px 4px 8px #181a1f, inset -3px -3px 6px #343840; }
+        .modal input[type="file"]::file-selector-button { background: #3a3d46; border: none; border-radius: 40px; padding: 8px 16px; color: white; }
+        .modal button { width: 100%; margin-bottom: 10px; padding: 10px; border-radius: 50px; font-weight: bold; background: #343840; color: white; box-shadow: 5px 5px 10px #1f2127, -3px -3px 6px #40444f; cursor: pointer; }
+        .modal button:first-of-type { background: #2c7a4d; }
+        .info-img { width: 90px; height: 90px; background-size: cover; background-position: center; border-radius: 30px; margin: 0 auto; }
+        .history-list { max-height: 400px; overflow-y: auto; padding: 5px; }
+        .history-item { background: #2c2e34; margin: 12px 0; padding: 12px; border-radius: 28px; box-shadow: 8px 8px 16px #181a1f, -6px -6px 12px #3a3e48; text-align: left; transition: 0.2s; }
+        .history-item .date { font-size: 0.7rem; color: #ffcd7e; margin-bottom: 6px; }
+        .history-item .client { font-size: 1rem; font-weight: bold; color: white; }
+        .history-item .details { font-size: 0.75rem; color: #aaa; margin-top: 4px; }
+        .footer { position: fixed; bottom: 5px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 0.6rem; color: #888; z-index: 10; pointer-events: none; }
+        .footer .reset-btn { pointer-events: auto; background: #4a4e5a; border: none; border-radius: 30px; padding: 4px 14px; color: white; font-size: 0.7rem; cursor: pointer; box-shadow: 0 2px 5px black; }
+        .footer .signature { pointer-events: auto; background: rgba(0,0,0,0.4); padding: 2px 10px; border-radius: 20px; }
+        .reset-message { position: fixed; bottom: 55px; left: 50%; transform: translateX(-50%); background: #333; color: #ffcd7e; padding: 4px 12px; border-radius: 30px; font-size: 0.65rem; z-index: 200; white-space: nowrap; }
+    </style>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4b6cb7">
+<link rel="apple-touch-icon" href="icon.png"></head>
+<body>
+
+<!-- ==================== STRUCTURE HTML (inchangée) ==================== -->
+<div id="role-switch">
+    <div class="brand select-none">📦 LIVREZONE</div>
+    <button id="mode-btn" class="role-btn active-livreur select-none">Mode : LIVREUR</button>
+</div>
+
+<div id="admin-controls" class="admin-controls hidden">
+    <label>📏 Unité (m) <select id="unit-select"></select></label>
+    <label>🌈 Spectre (m) <select id="spectre-select"></select></label>
+    <button id="history-btn">📜 Historique</button>
+    <div class="excel-group">
+        <button id="excel-main-btn">📊 Excel</button>
+        <div id="excel-sub" class="excel-sub-buttons hidden-group">
+            <button id="export-excel">📤 Export</button>
+            <button id="import-excel">📥 Import</button>
+        </div>
+    </div>
+</div>
+
+<div class="noyau-wrapper">
+    <div class="app-container" id="circle-container">
+        <div class="btn-center select-none" id="center-circle"></div>
+    </div>
+    <div class="closest-info" id="closest-info">
+        🎯 <span id="closest-name">—</span> · 📍 <span id="closest-distance">—</span> <span id="dist-unit">m</span>
+    </div>
+</div>
+
+<div class="dual-maps">
+    <div class="map-card" id="map-card1">
+        <h4>🗺️ Itinéraire détaillé</h4>
+        <div id="map" class="map"></div>
+        <div id="main-loader" class="map-loader" style="display: none;"><div class="spinner"></div></div>
+    </div>
+    <div class="map-card" id="map-card2">
+        <h4>🚗 Vue conduite</h4>
+        <div id="mini-map" class="map"></div>
+        <div id="mini-loader" class="map-loader" style="display: none;"><div class="spinner"></div></div>
+    </div>
+</div>
+
+<!-- Modales -->
+<div id="livraison-modal" class="modal">
+    <div class="modal-content">
+        <p>📦 Dépôt produit</p>
+        <p style="font-size:0.9rem;">Avez-vous bien déposé le produit chez <strong id="livraison-client-name">le client</strong> ?</p>
+        <button id="confirm-livraison" style="background: #2c7a4d;">✅ Confirmer la livraison</button>
+        <button onclick="closeModal('livraison-modal')">❌ Annuler</button>
+    </div>
+</div>
+<div id="history-modal" class="modal">
+    <div class="modal-content" style="max-width: 350px; width: 90%;">
+        <p>📋 Historique des livraisons</p>
+        <div id="history-list" class="history-list"></div>
+        <button onclick="closeModal('history-modal')">Fermer</button>
+    </div>
+</div>
+<input type="file" id="excel-import-input" accept=".csv, .xlsx, .xls" style="display: none;" />
+<div id="geo-message" class="geo-message" style="display: none;"></div>
+<div id="edit-modal" class="modal">
+    <div class="modal-content">
+        <p>✎ Édition</p>
+        <input type="text" id="m-name" placeholder="Nom">
+        <input type="text" id="m-coords" placeholder="Coordonnées (lat,lon ou Plus Code)">
+        <input type="file" id="m-file" accept="image/*">
+        <button onclick="saveModal()">Valider</button>
+        <button onclick="closeModal('edit-modal')">Fermer</button>
+    </div>
+</div>
+<div id="info-modal" class="modal">
+    <div class="modal-content">
+        <div id="info-img" class="info-img"></div>
+        <h2 id="info-name">Nom</h2>
+        <button onclick="closeModal('info-modal')">Fermer</button>
+    </div>
+</div>
+
+<div class="footer select-none">
+    <button id="resetBtn" class="reset-btn">🗑️ Reset données</button>
+    <div class="signature">Livrezone · Laiche Brahim 2026</div>
+</div>
+
+<script>
+    // ==================== CORRECTION : Attendre le DOM et les dépendances defer ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        // ==================== SECTION 1 : SERVICE WORKER & OFFLINE ====================
+        (function() {
+            const swCode = `
+                const CACHE_NAME = 'livrezone-v1';
+                const urlsToCache = [
+                    '/', '/index.html',
+                    'https://unpkg.com/dexie@4.0.1/dist/dexie.js',
+                    'https://unpkg.com/open-location-code@1.0.3/dist/openlocationcode.min.js',
+                    'https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js',
+                    'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+                    'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+                    'https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css',
+                    'https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js'
+                ];
+                self.addEventListener('install', event => {
+                    event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache)));
+                });
+                self.addEventListener('fetch', event => {
+                    event.respondWith(caches.match(event.request).then(response => response || fetch(event.request)));
+                });
+                self.addEventListener('activate', event => {
+                    event.waitUntil(caches.keys().then(cacheNames => Promise.all(cacheNames.filter(name => name !== CACHE_NAME).map(name => caches.delete(name)))));
+                });
+            `;
+            const blob = new Blob([swCode], { type: 'application/javascript' });
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(console.warn);
+            }
+            function updateOfflineOverlay() {
+                const isOffline = !navigator.onLine;
+                document.querySelectorAll('.map-card').forEach(card => {
+                    let existing = card.querySelector('.offline-overlay');
+                    if (isOffline && !existing) {
+                        const div = document.createElement('div');
+                        div.className = 'offline-overlay';
+                        div.textContent = '⚠️ Hors-ligne – carte non disponible';
+                        card.appendChild(div);
+                    } else if (!isOffline && existing) existing.remove();
+                });
+            }
+            window.addEventListener('online', updateOfflineOverlay);
+            window.addEventListener('offline', updateOfflineOverlay);
+            updateOfflineOverlay();
+        })();
+
+        // ==================== SECTION 2 : CONFIGURATION GLOBALE & VARIABLES ====================
+        const db = new Dexie('LivrezoneDB');
+        db.version(3).stores({
+            points: 'id, name, coords, image, delivered',
+            deliveries: '++id, timestamp, pointName'
+        }).upgrade(tx => tx.table('points').toCollection().modify(p => { if (p.delivered === undefined) p.delivered = false; }));
+
+        let currentRole = 'livreur';
+        let activeBtn = null;
+        let currentPosition = null;
+        const NB_BUTTONS = 20;
+        const CENTER_X = 50, CENTER_Y = 50;
+        const RAYON_VOYANTS = 28;
+        const RAYON_BOUTONS = 40;
+        let unitDistance = 10, spectreDistance = 100;
+
+        // Éléments DOM fréquents
+        const mainLoader = document.getElementById('main-loader');
+        const miniLoader = document.getElementById('mini-loader');
+        const closestNameSpan = document.getElementById('closest-name');
+        const closestDistanceSpan = document.getElementById('closest-distance');
+        const distUnitSpan = document.getElementById('dist-unit');
+        const centerCircle = document.getElementById('center-circle');
+        const livraisonModal = document.getElementById('livraison-modal');
+        const livraisonClientNameSpan = document.getElementById('livraison-client-name');
+        const geoMessageDiv = document.getElementById('geo-message');
+
+        // ==================== SECTION 3 : FONCTIONS UTILITAIRES (DRY) ====================
+        function formatDistance(meters) {
+            if (meters < 1000) {
+                distUnitSpan.innerText = 'm';
+                return Math.round(meters);
+            } else {
+                distUnitSpan.innerText = 'km';
+                return (meters / 1000).toFixed(1);
+            }
+        }
+
+        function tryParsePlusCode(input) {
+            if (!input || typeof input !== 'string') return null;
+            const trimmed = input.trim();
+            if (!/[A-Z0-9]{2,}\+[A-Z0-9]{2,}/i.test(trimmed)) return null;
+            try {
+                let code = trimmed.split(' ')[0];
+                if (OpenLocationCode.isValid(code)) {
+                    const decoded = OpenLocationCode.decode(code);
+                    if (decoded && typeof decoded.latitudeCenter === 'number' && typeof decoded.longitudeCenter === 'number')
+                        return { lat: decoded.latitudeCenter, lng: decoded.longitudeCenter };
+                }
+            } catch(e) { console.warn("Plus Code error", e); }
+            return null;
+        }
+
+        function parseCoordinates(coordStr) {
+            if (!coordStr) return null;
+            let parts = coordStr.split(',').map(s => parseFloat(s.trim()));
+            if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]))
+                return { lat: parts[0], lng: parts[1] };
+            return tryParsePlusCode(coordStr);
+        }
+
+        function getDist(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const dLat = (lat2-lat1)*Math.PI/180;
+            const dLon = (lon2-lon1)*Math.PI/180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function getDynamicColor(dist) {
+            if (dist > spectreDistance) return '#555';
+            if (dist <= unitDistance) return `hsl(120, 100%, 50%)`;
+            let t = (dist - unitDistance) / (spectreDistance - unitDistance);
+            let hue = 120 * (1 - t);
+            hue = Math.max(0, Math.min(120, hue));
+            return `hsl(${hue}, 100%, 50%)`;
+        }
+
+        function showLoader(loader) { if (loader) loader.style.display = 'flex'; }
+        function hideLoader(loader) { if (loader) loader.style.display = 'none'; }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        function escapeHtml(str) { return str.replace(/[&<>]/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m])); }
+        function showResetMessage(msg) {
+            let div = document.querySelector('.reset-message');
+            if (!div) { div = document.createElement('div'); div.className = 'reset-message'; document.body.appendChild(div); }
+            div.textContent = msg;
+            div.style.opacity = '1';
+            clearTimeout(window.msgTimeout);
+            window.msgTimeout = setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 2000);
+        }
+
+        // ==================== SECTION 4 : GESTION DE L'INTERFACE (NOYAU, BOUTONS) ====================
+        let lastPulseState = false;
+        function updateCenterPulse() {
+            if (!currentPosition) {
+                if (lastPulseState) centerCircle.classList.remove('pulse');
+                lastPulseState = false;
+                return;
+            }
+            let closestDist = Infinity;
+            for (let btn of boutons) {
+                const coords = parseCoordinates(btn.dataset.coords);
+                if (coords && !btn.classList.contains('delivered'))
+                    closestDist = Math.min(closestDist, getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng));
+            }
+            const shouldPulse = (closestDist <= 10);
+            if (shouldPulse && !lastPulseState) { centerCircle.classList.add('pulse'); lastPulseState = true; }
+            else if (!shouldPulse && lastPulseState) { centerCircle.classList.remove('pulse'); lastPulseState = false; }
+        }
+
+        function updateClosestInfo() {
+            if (!currentPosition) {
+                closestNameSpan.innerText = closestDistanceSpan.innerText = '—';
+                updateCenterPulse();
+                return;
+            }
+            let closestBtn = null, closestDist = Infinity;
+            for (let btn of boutons) {
+                const coords = parseCoordinates(btn.dataset.coords);
+                if (coords) {
+                    const dist = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                    if (dist < closestDist) { closestDist = dist; closestBtn = btn; }
+                }
+            }
+            if (closestBtn) {
+                closestNameSpan.innerText = closestBtn.dataset.name || "Point sans nom";
+                closestDistanceSpan.innerText = formatDistance(closestDist);
+            } else {
+                closestNameSpan.innerText = closestDistanceSpan.innerText = '—';
+            }
+            updateCenterPulse();
+        }
+
+        // Positionnement des boutons sur le cercle
+        function positionPair(btn, angleRad) {
+            const leftPct = CENTER_X + RAYON_BOUTONS * Math.cos(angleRad);
+            const topPct = CENTER_Y + RAYON_BOUTONS * Math.sin(angleRad);
+            btn.style.left = `${leftPct}%`;
+            btn.style.top = `${topPct}%`;
+            if (btn.voyant) {
+                const vLeft = CENTER_X + RAYON_VOYANTS * Math.cos(angleRad);
+                const vTop = CENTER_Y + RAYON_VOYANTS * Math.sin(angleRad);
+                btn.voyant.style.left = `${vLeft}%`;
+                btn.voyant.style.top = `${vTop}%`;
+            }
+        }
+
+        function reorderByDistance() {
+            if (!currentPosition) return;
+            const withDist = boutons.map(btn => {
+                const coords = parseCoordinates(btn.dataset.coords);
+                return { btn, dist: coords ? getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng) : Infinity };
+            });
+            const nonDelivered = withDist.filter(i => !i.btn.classList.contains('delivered'));
+            const delivered = withDist.filter(i => i.btn.classList.contains('delivered'));
+            const sortedNonDelivered = [...nonDelivered].sort((a,b) => a.dist - b.dist);
+            const allSorted = [...sortedNonDelivered, ...delivered];
+            allSorted.forEach((item, idx) => positionPair(item.btn, (idx / NB_BUTTONS) * 2 * Math.PI - Math.PI/2));
+            sortedNonDelivered.forEach(item => {
+                const dist = item.dist;
+                item.btn.voyant.style.backgroundColor = (dist === Infinity) ? '#555' : getDynamicColor(dist);
+            });
+            delivered.forEach(item => item.btn.voyant.style.backgroundColor = '#555');
+            const closestNonDelivered = sortedNonDelivered[0]?.btn;
+            if (closestNonDelivered && closestNonDelivered.dataset.image) {
+                centerCircle.style.backgroundImage = `url(${closestNonDelivered.dataset.image})`;
+                centerCircle.style.backgroundColor = 'transparent';
+            } else {
+                centerCircle.style.backgroundImage = 'none';
+                centerCircle.style.backgroundColor = '#2c2e34';
+            }
+            updateClosestInfo();
+        }
+
+        // ==================== SECTION 5 : GESTION DES POINTS (DEXIE & UI) ====================
+        async function markAsDelivered(btn) {
+            const id = parseInt(btn.dataset.id);
+            btn.dataset.delivered = "true";
+            btn.classList.add('delivered');
+            const existing = await db.points.get(id);
+            if (existing) await db.points.update(id, { delivered: true });
+            else await db.points.put({ id, name: btn.dataset.name || "", coords: btn.dataset.coords || "", image: btn.dataset.image || "", delivered: true });
+        }
+
+        async function saveDelivery(pointName, btn) {
+            const now = new Date();
+            await db.deliveries.add({
+                timestamp: now.getTime(),
+                pointName: pointName,
+                displayDate: now.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' })
+            });
+            await markAsDelivered(btn);
+        }
+
+        async function loadHistory() {
+            const deliveries = await db.deliveries.orderBy('timestamp').reverse().toArray();
+            const container = document.getElementById('history-list');
+            if (!container) return;
+            if (deliveries.length === 0) container.innerHTML = '<div class="history-item" style="text-align:center;">Aucune livraison enregistrée</div>';
+            else container.innerHTML = deliveries.map(d => `
+                <div class="history-item">
+                    <div class="date">📅 ${d.displayDate || new Date(d.timestamp).toLocaleString()}</div>
+                    <div class="client">📦 ${escapeHtml(d.pointName)}</div>
+                    <div class="details">Livraison confirmée</div>
+                </div>
+            `).join('');
+        }
+
+        async function savePointToDB(id, name, coords, image, delivered = false) {
+            await db.points.put({ id, name, coords, image, delivered });
+        }
+        async function getPoint(id) { return await db.points.get(id); }
+        async function deleteAllPoints() { await db.points.clear(); await db.deliveries.clear(); }
+
+        async function loadAllPoints() {
+            const allPoints = await db.points.toArray();
+            for (let p of allPoints) {
+                const btn = boutons[p.id];
+                if (btn) {
+                    btn.dataset.name = p.name || "";
+                    btn.dataset.coords = p.coords || "";
+                    btn.dataset.image = p.image || "";
+                    btn.style.backgroundImage = p.image ? `url(${p.image})` : 'none';
+                    if (p.delivered) { btn.dataset.delivered = "true"; btn.classList.add('delivered'); }
+                    else btn.classList.remove('delivered');
+                    updateAriaLabels();
+                }
+            }
+            refreshAll();
+        }
+
+        function refreshAll() {
+            boutons.forEach(btn => {
+                if (btn.dataset.image && btn.dataset.image !== "") {
+                    btn.style.backgroundImage = `url(${btn.dataset.image})`;
+                    btn.style.backgroundColor = 'transparent';
+                } else {
+                    btn.style.backgroundImage = 'none';
+                    btn.style.backgroundColor = '#333';
+                }
+                if (btn.dataset.delivered === "true") btn.classList.add('delivered');
+                else btn.classList.remove('delivered');
+                updateAriaLabels();
+            });
+            if (currentPosition) reorderByDistance();
+            else {
+                boutons.forEach((btn, idx) => positionPair(btn, (idx / NB_BUTTONS) * 2 * Math.PI - Math.PI/2));
+                boutons.forEach(btn => { if (btn.voyant) btn.voyant.style.backgroundColor = '#555'; });
+            }
+        }
+
+        // ==================== SECTION 6 : GÉOLOCALISATION ====================
+        let geoWatchId = null;
+        function showGeoMessage(msg, showRetry = false) {
+            geoMessageDiv.innerHTML = msg + (showRetry ? ' <button id="geo-retry-btn">🔁 Réessayer</button>' : '');
+            geoMessageDiv.style.display = 'block';
+            if (showRetry) {
+                const retryBtn = document.getElementById('geo-retry-btn');
+                if (retryBtn) retryBtn.onclick = () => { initGeolocation(); geoMessageDiv.style.display = 'none'; };
+            }
+            setTimeout(() => {
+                if (geoMessageDiv.style.display === 'block' && !showRetry) {
+                    geoMessageDiv.style.opacity = '0';
+                    setTimeout(() => { if (geoMessageDiv.style.display === 'block') geoMessageDiv.style.display = 'none'; geoMessageDiv.style.opacity = ''; }, 1000);
+                }
+            }, 4000);
+        }
+        function hideGeoMessage() { geoMessageDiv.style.display = 'none'; }
+        function initGeolocation() {
+            if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
+            showGeoMessage('📍 Demande de position...', false);
+            geoWatchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    currentPosition = pos.coords;
+                    hideGeoMessage();
+                    scheduleReorder();
+                    updateMapRoute();
+                },
+                (err) => {
+                    let errorMsg = "";
+                    switch(err.code) {
+                        case err.PERMISSION_DENIED: errorMsg = "❌ Accès refusé. Activez le GPS."; break;
+                        case err.POSITION_UNAVAILABLE: errorMsg = "📡 Position indisponible."; break;
+                        case err.TIMEOUT: errorMsg = "⏱️ Délai dépassé."; break;
+                        default: errorMsg = "⚠️ Erreur GPS.";
+                    }
+                    showGeoMessage(errorMsg, true);
+                    if (geoWatchId) navigator.geolocation.clearWatch(geoWatchId);
+                    geoWatchId = null;
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+
+        // ==================== SECTION 7 : CARTES & ITINÉRAIRES ====================
+        let map, drivingMap, routingControl = null, currentRouteDest = null, drivingPolyline = null, destMarker = null;
+        let lastDrivingUpdate = 0;
+        const DRIVING_UPDATE_INTERVAL = 500;
+
+        function initMaps() {
+            map = L.map('map').setView([48.8566, 2.3522], 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; OSM & CartoDB', subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+            drivingMap = L.map('mini-map').setView([48.8566, 2.3522], 16);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; CartoDB', subdomains: 'abcd', maxZoom: 19, minZoom: 10 }).addTo(drivingMap);
+        }
+
+        function updateDrivingViewWithRoute(coordinates) {
+            if (!drivingMap || !currentPosition) return;
+            const now = Date.now();
+            if (now - lastDrivingUpdate < DRIVING_UPDATE_INTERVAL) return;
+            lastDrivingUpdate = now;
+            drivingMap.setView([currentPosition.latitude, currentPosition.longitude], 16, { animate: false });
+            if (drivingPolyline) drivingMap.removeLayer(drivingPolyline);
+            drivingPolyline = (coordinates && coordinates.length) ? L.polyline(coordinates, { color: '#ff4444', weight: 3, opacity: 0.9 }).addTo(drivingMap) : null;
+            let closestPoint = null, closestDist = Infinity;
+            for (let btn of boutons) {
+                const coords = parseCoordinates(btn.dataset.coords);
+                if (coords && !btn.classList.contains('delivered')) {
+                    const dist = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                    if (dist < closestDist) { closestDist = dist; closestPoint = coords; }
+                }
+            }
+            if (closestPoint) {
+                if (destMarker) drivingMap.removeLayer(destMarker);
+                destMarker = L.marker([closestPoint.lat, closestPoint.lng], { icon: L.divIcon({ html: '🎯', iconSize: [20,20] }) }).addTo(drivingMap);
+            } else if (destMarker) { drivingMap.removeLayer(destMarker); destMarker = null; }
+        }
+
+        function updateMapRoute() {
+            if (!map || !currentPosition) return;
+            let closestPoint = null, closestDist = Infinity;
+            for (let btn of boutons) {
+                const coords = parseCoordinates(btn.dataset.coords);
+                if (coords && !btn.classList.contains('delivered')) {
+                    const dist = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                    if (dist < closestDist) { closestDist = dist; closestPoint = coords; }
+                }
+            }
+            if (closestPoint && (currentRouteDest !== `${closestPoint.lat},${closestPoint.lng}`)) {
+                currentRouteDest = `${closestPoint.lat},${closestPoint.lng}`;
+                if (routingControl) map.removeControl(routingControl);
+                showLoader(mainLoader); showLoader(miniLoader);
+                routingControl = L.Routing.control({
+                    waypoints: [L.latLng(currentPosition.latitude, currentPosition.longitude), L.latLng(closestPoint.lat, closestPoint.lng)],
+                    routeWhileDragging: false, showAlternatives: false,
+                    lineOptions: { styles: [{ color: '#ff4444', weight: 5 }] },
+                    router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+                    show: false
+                }).addTo(map);
+                routingControl.on('routesfound', e => {
+                    hideLoader(mainLoader); hideLoader(miniLoader);
+                    const coords = e.routes[0]?.coordinates;
+                    updateDrivingViewWithRoute(coords && coords.length ? coords : null);
+                }).on('routingerror', () => { hideLoader(mainLoader); hideLoader(miniLoader); updateDrivingViewWithRoute(null); });
+            } else if (!closestPoint && routingControl) {
+                map.removeControl(routingControl); routingControl = null; currentRouteDest = null;
+                updateDrivingViewWithRoute(null); hideLoader(mainLoader); hideLoader(miniLoader);
+            } else if (closestPoint && routingControl && drivingMap && currentPosition) {
+                const now = Date.now();
+                if (now - lastDrivingUpdate >= DRIVING_UPDATE_INTERVAL) {
+                    drivingMap.setView([currentPosition.latitude, currentPosition.longitude], 16, { animate: false });
+                    let newClosest = null, newDist = Infinity;
+                    for (let btn of boutons) {
+                        const coords = parseCoordinates(btn.dataset.coords);
+                        if (coords && !btn.classList.contains('delivered')) {
+                            const d = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                            if (d < newDist) { newDist = d; newClosest = coords; }
+                        }
+                    }
+                    if (newClosest) {
+                        if (destMarker) drivingMap.removeLayer(destMarker);
+                        destMarker = L.marker([newClosest.lat, newClosest.lng], { icon: L.divIcon({ html: '🎯', iconSize: [20,20] }) }).addTo(drivingMap);
+                    }
+                    lastDrivingUpdate = now;
+                }
+            }
+            updateClosestInfo();
+        }
+
+        let reorderRequestId = null;
+        function scheduleReorder() {
+            if (reorderRequestId) return;
+            reorderRequestId = requestAnimationFrame(() => {
+                if (currentPosition) reorderByDistance();
+                reorderRequestId = null;
+                updateMapRoute();
+            });
+        }
+
+        // ==================== SECTION 8 : GESTION DES RONDS (CRÉATION DYNAMIQUE) ====================
+        const container = document.getElementById('circle-container');
+        const voyants = [];
+        const boutons = [];
+
+        for (let i = 0; i < NB_BUTTONS; i++) {
+            const voyant = document.createElement('div'); voyant.className = 'voyant'; container.appendChild(voyant); voyants.push(voyant);
+            const btn = document.createElement('div'); btn.className = 'btn-circle select-none'; btn.dataset.id = i; btn.setAttribute('aria-label', `Point ${i+1}`);
+            btn.style.backgroundImage = 'none'; btn.style.backgroundColor = '#333'; btn.voyant = voyant;
+            let pressTimer, longPressTriggered = false;
+            const handlePointerDown = (e) => { e.preventDefault(); longPressTriggered = false; pressTimer = setTimeout(() => { longPressTriggered = true; if (currentRole === 'admin') startCapture(btn); }, 800); };
+            const handlePointerUp = (e) => { e.preventDefault(); clearTimeout(pressTimer); if (!longPressTriggered && currentRole === 'admin') openEditModal(btn); else if (!longPressTriggered && currentRole !== 'admin') openInfoModal(btn); };
+            btn.addEventListener('pointerdown', handlePointerDown); btn.addEventListener('pointerup', handlePointerUp); btn.addEventListener('pointercancel', () => clearTimeout(pressTimer));
+            container.appendChild(btn); boutons.push(btn);
+        }
+
+        function updateAriaLabels() {
+            boutons.forEach((btn, idx) => btn.setAttribute('aria-label', `Point ${idx+1} – ${btn.dataset.name || 'sans nom'} – ${currentRole === 'admin' ? 'éditer' : 'voir'}`));
+        }
+
+        // ==================== SECTION 9 : ÉVÉNEMENTS UI (MODALES, IMPORT/EXPORT, RESET) ====================
+        function openHistoryModal() { loadHistory(); document.getElementById('history-modal').style.display = 'flex'; }
+        function openEditModal(btn) { activeBtn = btn; document.getElementById('m-coords').value = btn.dataset.coords || ""; document.getElementById('m-name').value = btn.dataset.name || ""; document.getElementById('edit-modal').style.display = 'flex'; }
+        function openInfoModal(btn) { activeBtn = btn; document.getElementById('info-name').innerText = btn.dataset.name || "Point sans nom"; document.getElementById('info-img').style.backgroundImage = btn.dataset.image ? `url(${btn.dataset.image})` : 'none'; document.getElementById('info-modal').style.display = 'flex'; }
+        function startCapture(btn) {
+            navigator.geolocation.getCurrentPosition(
+                pos => { if (navigator.vibrate) navigator.vibrate(200); openEditModal(btn); document.getElementById('m-coords').value = `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`; },
+                err => showGeoMessage("❌ Impossible d'obtenir la position", true)
+            );
+        }
+
+        async function saveModal() {
+            if (!activeBtn) return;
+            const id = parseInt(activeBtn.dataset.id), name = document.getElementById('m-name').value, coords = document.getElementById('m-coords').value, file = document.getElementById('m-file').files[0];
+            const existing = await getPoint(id);
+            const wasDelivered = existing ? existing.delivered : false;
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const img = new Image();
+                    img.onload = async () => {
+                        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 200;
+                        canvas.getContext('2d').drawImage(img, 0, 0, 200, 200);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.9);
+                        activeBtn.dataset.name = name; activeBtn.dataset.coords = coords; activeBtn.dataset.image = imageData;
+                        if (wasDelivered) activeBtn.dataset.delivered = "true"; else delete activeBtn.dataset.delivered;
+                        await savePointToDB(id, name, coords, imageData, wasDelivered);
+                        refreshAll();
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                activeBtn.dataset.name = name; activeBtn.dataset.coords = coords;
+                const imageData = existing ? existing.image : (activeBtn.dataset.image || "");
+                activeBtn.dataset.image = imageData;
+                if (wasDelivered) activeBtn.dataset.delivered = "true"; else delete activeBtn.dataset.delivered;
+                await savePointToDB(id, name, coords, imageData, wasDelivered);
+                refreshAll();
+            }
+            closeModal('edit-modal');
+        }
+
+        // Export/Import Excel
+        function exportToExcel() {
+            const data = [['Nom', 'Coordonnées']];
+            for (let i = 0; i < NB_BUTTONS; i++) data.push([boutons[i].dataset.name || '', boutons[i].dataset.coords || '']);
+            const ws = XLSX.utils.aoa_to_sheet(data);
+            const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Points');
+            XLSX.writeFile(wb, `livrezone_points_${new Date().toISOString().slice(0,19)}.xlsx`);
+        }
+        function importFromExcel(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "" });
+                if (!rows || rows.length < 2) { alert("Fichier invalide ou vide"); return; }
+                const importedPoints = [];
+                for (let i = 1; i < rows.length && i-1 < NB_BUTTONS; i++) {
+                    importedPoints.push({ name: String(rows[i][0] || "").trim(), coords: String(rows[i][1] || "").trim() });
+                }
+                while (importedPoints.length < NB_BUTTONS) importedPoints.push({ name: "", coords: "" });
+                (async () => {
+                    for (let i = 0; i < NB_BUTTONS; i++) {
+                        const btn = boutons[i], point = importedPoints[i];
+                        btn.dataset.name = point.name; btn.dataset.coords = point.coords;
+                        delete btn.dataset.image; delete btn.dataset.delivered;
+                        btn.classList.remove('delivered');
+                        btn.style.backgroundImage = 'none'; btn.style.backgroundColor = '#333';
+                        await db.points.put({ id: i, name: point.name, coords: point.coords, image: "", delivered: false });
+                    }
+                    refreshAll();
+                    alert(`Import terminé : ${importedPoints.filter(p => p.name || p.coords).length} points chargés.`);
+                })();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function resetAllData() {
+            await deleteAllPoints();
+            boutons.forEach(btn => {
+                delete btn.dataset.name; delete btn.dataset.coords; delete btn.dataset.image; delete btn.dataset.delivered;
+                btn.classList.remove('delivered'); btn.style.backgroundImage = 'none'; btn.style.backgroundColor = '#333';
+                if (btn.voyant) btn.voyant.style.backgroundColor = '#555';
+            });
+            centerCircle.style.backgroundImage = 'none'; centerCircle.style.backgroundColor = '#2c2e34';
+            if (currentPosition) scheduleReorder();
+            showResetMessage('✓ Données effacées (points + historique)');
+            if (routingControl) map.removeControl(routingControl);
+            routingControl = null; currentRouteDest = null;
+            if (drivingPolyline) drivingMap.removeLayer(drivingPolyline);
+            if (destMarker) drivingMap.removeLayer(destMarker);
+            drivingPolyline = null; destMarker = null;
+            hideLoader(mainLoader); hideLoader(miniLoader);
+            updateClosestInfo();
+        }
+
+        // ==================== SECTION 10 : INITIALISATION & GESTION DU RÔLE ====================
+        function toggleRole() {
+            currentRole = (currentRole === 'livreur') ? 'admin' : 'livreur';
+            const btn = document.getElementById('mode-btn');
+            btn.innerText = "Mode : " + currentRole.toUpperCase();
+            btn.className = "role-btn select-none " + (currentRole === 'admin' ? 'active-admin' : 'active-livreur');
+            const adminControls = document.getElementById('admin-controls');
+            if (currentRole === 'admin') adminControls.classList.remove('hidden');
+            else adminControls.classList.add('hidden');
+            updateAriaLabels();
+        }
+
+        function loadAdminSettings() {
+            const savedUnit = localStorage.getItem('livrezone_unit');
+            const savedSpectre = localStorage.getItem('livrezone_spectre');
+            if (savedUnit) unitDistance = parseInt(savedUnit, 10);
+            if (savedSpectre) spectreDistance = parseInt(savedSpectre, 10);
+            document.getElementById('unit-select').value = unitDistance;
+            document.getElementById('spectre-select').value = spectreDistance;
+        }
+        function saveAdminSettings() { localStorage.setItem('livrezone_unit', unitDistance); localStorage.setItem('livrezone_spectre', spectreDistance); }
+        function onAdminSettingChange() {
+            unitDistance = parseInt(document.getElementById('unit-select').value, 10);
+            spectreDistance = parseInt(document.getElementById('spectre-select').value, 10);
+            saveAdminSettings();
+            if (currentPosition) scheduleReorder();
+        }
+
+        // Écouteurs
+        document.getElementById('confirm-livraison').addEventListener('click', async () => {
+            let closestBtn = null, closestDist = Infinity;
+            for (let btn of boutons) {
+                const coords = parseCoordinates(btn.dataset.coords);
+                if (coords && currentPosition && !btn.classList.contains('delivered')) {
+                    const dist = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                    if (dist < closestDist) { closestDist = dist; closestBtn = btn; }
+                }
+            }
+            if (closestBtn) {
+                const pointName = closestBtn.dataset.name || "Client inconnu";
+                if (closestBtn.classList.contains('delivered')) { alert("⚠️ Ce point a déjà été livré !"); closeModal('livraison-modal'); return; }
+                await saveDelivery(pointName, closestBtn);
+                alert(`✅ Livraison enregistrée pour ${pointName}`);
+                closeModal('livraison-modal');
+                if (currentPosition) reorderByDistance();
+            } else { alert("❌ Aucun point à livrer à proximité"); closeModal('livraison-modal'); }
+        });
+
+        centerCircle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentRole !== 'livreur') return;
+            let hasNonDelivered = boutons.some(btn => !btn.classList.contains('delivered') && parseCoordinates(btn.dataset.coords));
+            if (!hasNonDelivered) { alert("🎉 Tous les points ont été livrés !"); return; }
+            let closestBtn = null, closestDist = Infinity;
+            for (let btn of boutons) {
+                if (!btn.classList.contains('delivered')) {
+                    const coords = parseCoordinates(btn.dataset.coords);
+                    if (coords && currentPosition) {
+                        const dist = getDist(currentPosition.latitude, currentPosition.longitude, coords.lat, coords.lng);
+                        if (dist < closestDist) { closestDist = dist; closestBtn = btn; }
+                    }
+                }
+            }
+            if (closestBtn) { livraisonClientNameSpan.innerText = closestBtn.dataset.name || "le client"; livraisonModal.style.display = 'flex'; }
+            else alert("Aucun point à livrer à proximité");
+        });
+
+        // Administration des selects
+        const unitSelect = document.getElementById('unit-select');
+        const spectreSelect = document.getElementById('spectre-select');
+        for (let v = 10; v <= 500; v += 10) unitSelect.appendChild(new Option(v, v));
+        for (let v = 100; v <= 5000; v += 100) spectreSelect.appendChild(new Option(v, v));
+        unitSelect.addEventListener('change', onAdminSettingChange);
+        spectreSelect.addEventListener('change', onAdminSettingChange);
+        document.getElementById('history-btn').addEventListener('click', openHistoryModal);
+
+        // Excel group
+        const excelMain = document.getElementById('excel-main-btn');
+        const excelSub = document.getElementById('excel-sub');
+        excelMain.addEventListener('click', (e) => { e.stopPropagation(); excelSub.classList.toggle('hidden-group'); });
+        document.addEventListener('click', (e) => { if (!excelMain.contains(e.target) && !excelSub.contains(e.target)) excelSub.classList.add('hidden-group'); });
+        document.getElementById('export-excel').addEventListener('click', exportToExcel);
+        document.getElementById('import-excel').addEventListener('click', () => document.getElementById('excel-import-input').click());
+        document.getElementById('excel-import-input').addEventListener('change', (e) => { if (e.target.files.length) { importFromExcel(e.target.files[0]); e.target.value = ''; } });
+
+        // Reset double-clic
+        let resetPending = false, resetTimeout = null;
+        document.getElementById('resetBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (resetPending) {
+                clearTimeout(resetTimeout); resetAllData(); resetPending = false;
+                e.target.textContent = '🗑️ Reset données'; e.target.style.background = '#4a4e5a';
+            } else {
+                resetPending = true; e.target.textContent = '⚠️ Confirmer ?'; e.target.style.background = '#c0392b';
+                resetTimeout = setTimeout(() => { resetPending = false; e.target.textContent = '🗑️ Reset données'; e.target.style.background = '#4a4e5a'; showResetMessage('Annulé'); }, 2500);
+                showResetMessage('Cliquez à nouveau pour confirmer');
+            }
+        });
+
+        // Attachement de l'événement du bouton de rôle
+        const modeBtn = document.getElementById('mode-btn');
+        modeBtn.addEventListener('click', toggleRole);
+
+        // ==================== EXPOSITION DES FONCTIONS POUR LES ATTRIBUTS ONCLICK ====================
+        window.saveModal = saveModal;
+        window.closeModal = closeModal;
+        window.toggleRole = toggleRole; // au cas où
+
+        // Lancement
+        loadAdminSettings();
+        initMaps();
+        loadAllPoints().then(() => initGeolocation());
+        if (currentRole === 'admin') document.getElementById('admin-controls').classList.remove('hidden');
+        updateAriaLabels();
+    }); // Fin DOMContentLoaded
+</script>
+
+<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
+</body>
+</html>
